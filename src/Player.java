@@ -87,7 +87,7 @@ class Moves {
     }
 
     public Moves() {
-        
+
     }
 }
 
@@ -106,6 +106,9 @@ class Ai {
     RandomHelper catcherRd;
     RandomHelper supportRd;
     Ghost toBust = null, toTrap = null, stolenToTrap;
+
+    boolean stunAvailable = true;
+    int roundBeforeStunAvailable = 21;
     Buster toStun;
 
     Entry entry;
@@ -155,6 +158,27 @@ class Ai {
                 else moves.release = String.format("MOVE %s %s", baseBoundX, baseBoundY);
             }
 
+            // handle Stun move
+            // Si le Catcher enemy est visible, et que le stun est dispo, le suivre jusqu'à ce qu'il soit CARRYER
+            // Si il n'est pas visible, random jusqu'à le voir
+            toStun = isEnemyCatcherVisible();
+            if (toStun != null && stunAvailable) {
+                if (Math.sqrt(Math.pow(toStun.x - entry.support.x, 2) + Math.pow(toStun.y - entry.support.y, 2)) < STUN_LIMIT) {
+                    //if (toStun.state.equals(BusterState.CARRIER)) {
+                        moves.support = String.format("STUN %s", toStun.id);
+                        stunAvailable = false;
+                        roundBeforeStunAvailable = 21;
+                    //} else {
+                    //    moves.support = String.format("MOVE %s %s", toStun.x, toStun.y);
+                    //}
+                } else {
+                    moves.support = String.format("MOVE %s %s", toStun.x, toStun.y);
+                }
+            } else if (toStun != null) {
+                moves.support = String.format("MOVE %s %s", toStun.x, toStun.y);
+            }
+
+
             // Si au moins un ghost est visible (busted ou pas),
 
             //      par default: tout le monde random
@@ -188,8 +212,14 @@ class Ai {
                         }
                         // Catcher is not in range
                         else {
-                            moves.hunter = String.format("MOVE %s %s", entry.hunter.x, entry.hunter.y);
-                            moves.catcher = String.format("MOVE %s %s", toTrap.x, toTrap.y);
+                            // si le catcher est trop proche, l'eloigner en direction opposé du ghost
+                            if (Math.sqrt(Math.pow(toTrap.x - entry.catcher.x, 2) + Math.pow(toTrap.y - entry.catcher.y, 2)) < BUST_TRAP_LOWER_BOUND) {
+                                int[] offsets = moveBackward(toTrap, entry.catcher);
+                                moves.catcher = String.format("MOVE %s %s", offsets[0], offsets[1]);
+                            } else {
+                                // moves.hunter = String.format("MOVE %s %s", entry.hunter.x, entry.hunter.y);
+                                moves.catcher = String.format("MOVE %s %s", toTrap.x, toTrap.y);
+                            }
                         }
                     }
                 }
@@ -204,6 +234,45 @@ class Ai {
         System.out.println(moves.release == null ? moves.catcher : moves.release);
         System.out.println(moves.support);
         if (moves.release != null) moves.release = null;
+
+        if (!stunAvailable) {
+            roundBeforeStunAvailable--;
+            if (roundBeforeStunAvailable == 0) {
+                roundBeforeStunAvailable = 21;
+                stunAvailable = true;
+            }
+        }
+    }
+
+    private int[] moveBackward(Ghost target, Buster buster) {
+        int dir;
+        boolean sameX;
+        if ((sameX = target.x - buster.x == 0)) {
+            dir = 0;
+        } else {
+            dir = (target.y - buster.y)/(target.x - buster.x);
+        }
+        int sign = -1;
+        int offsetX = buster.x;
+        int offsetY = buster.y;
+        if (!sameX) {
+            if (target.x < buster.x) {
+                sign = 1;
+            }
+        } else {
+            if (target.y < buster.y) {
+                sign = 1;
+            }
+        }
+        double dist = Math.sqrt(Math.pow(target.x - offsetX, 2) + Math.pow(target.y - offsetY, 2));
+        while (dist < 900.0) {
+            if (sameX) offsetY += sign;
+            else offsetX += sign;
+            if (!sameX) offsetY = dir * offsetX;
+            else offsetX += sign;
+            dist = Math.sqrt(Math.pow(target.x - offsetX, 2) + Math.pow(target.y - offsetY, 2));
+        }
+        return new int[]{offsetX, offsetY};
     }
 
     // Pursuit or bust best
@@ -220,8 +289,16 @@ class Ai {
 
         // Hunter is not in range
         else {
-            // Hunter pursuit the best to bust
-            moves.hunter = String.format("MOVE %s %s", toBust.x, toBust.y);
+
+            // si le Hunter est trop proche, l'eloigner en direction opposé du ghost
+            if (Math.sqrt(Math.pow(toBust.x - entry.hunter.x, 2) + Math.pow(toBust.y - entry.hunter.y, 2)) < BUST_TRAP_LOWER_BOUND) {
+                int[] offsets = moveBackward(toBust, entry.hunter);
+                moves.hunter = String.format("MOVE %s %s", offsets[0], offsets[1]);
+            }
+            else {
+                // Hunter pursuit the best to bust
+                moves.hunter = String.format("MOVE %s %s", toBust.x, toBust.y);
+            }
             // Catcher release or move to the ghost toBust
             if (entry.catcher.state.equals(BusterState.NOT_CARRIER)) moves.catcher  = String.format("MOVE %s %s", toBust.x, toBust.y);
         }
@@ -301,26 +378,14 @@ class Ai {
         return bestToTrap;
     }
 
-//    private Buster chooseBestBustersToStun() {
-//        Buster bestToStun, secondBestToStun;
-//        for (Buster enemy : entry.enemyBusters) {
-//            switch (enemy.role) {
-//                case HUNTER:
-//                    if (enemy.state.equals(BusterState.BUSTING)) bestToStun = enemy;
-//                    break;
-//                case CATCHER:
-//                    if (enemy.state.equals(BusterState.CARRIER)) {
-//                        // stolenToTrap =
-//                        return enemy;
-//                    }
-//                    if (enemy.state.equals(BusterState.TRAPPING)) secondBestToStun = enemy;
-//                    break;
-//                case SUPPORT:
-//
-//                    break;
-//            }
-//        }
-//    }
+    private Buster isEnemyCatcherVisible() {
+        for (Buster enemy : entry.enemyBusters) {
+            if (enemy.role.equals(Role.CATCHER)) {
+                return enemy;
+            }
+        }
+        return null;
+    }
 
     public void setBaseBounds() {
         if (entry.myTeamId == 0) {
